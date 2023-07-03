@@ -1,53 +1,36 @@
-import { readFileSync } from 'node:fs';
 import { FileReaderInterface } from './file-reader.interface.js';
-import { Offer } from '../../types/offer.type.js';
-// TODO: что тут с расширенями файлов??
-import { Location } from '../../types/location.enum.js';
-import { OfferType } from '../../types/offer-type.enum.js';
-import { Amenities } from '../../types/amenities.type.js';
+import EventEmitter from 'node:events';
+import { createReadStream } from 'node:fs';
 
+const CHUNK_SIZE = 16384; //16KB;
+export default class TSVFileReader extends EventEmitter implements FileReaderInterface {
 
-export default class TSVFileReader implements FileReaderInterface {
-  private rawData = '';
-
-  constructor(public filename: string) {}
-
-
-  public read(): void {
-    this.rawData = readFileSync(this.filename, { encoding: 'utf-8'});
+  constructor(public filename: string) {
+    super();
   }
 
-  public toArray(): Offer[] {
-    if (!this.rawData) {
-      return [];
+  public async read(): Promise<void> {
+    const stream = createReadStream(this.filename, {
+      highWaterMark: CHUNK_SIZE,
+      encoding: 'utf-8'
+    });
+
+    let remainingData = '';
+    let nextLinePosition = -1;
+    let importedRowCount = 0;
+
+    for await (const chunk of stream) {
+      remainingData += chunk.toString();
+
+      while ((nextLinePosition = remainingData.indexOf('\n')) >= 0) {
+        const completeRow = remainingData.slice(0, nextLinePosition + 1);
+        remainingData = remainingData.slice(++nextLinePosition);
+        importedRowCount++;
+
+        this.emit('line', completeRow);
+      }
     }
 
-    return this.rawData
-      .split('\n')
-      .filter((row) => row.trim() !== '')
-      .map((line) => line.split('\t'))
-      .map(([name, description, date, location, previewImageUrl, photos, isPremium, isFavourite, rating, type, roomCount, guestCount, rentCost, amenities, author, commentCount, coordinates ]) => ({
-        name,
-        description,
-        date: new Date(date),
-        location: Location[location as `${Location}`],
-        previewImageUrl,
-        photos: photos.split(' '),
-        isPremium: Boolean(isPremium),
-        isFavourite: Boolean(isFavourite),
-        rating: Number.parseInt(rating, 10),
-        type: OfferType[type as `${OfferType}`],
-        roomCount: Number.parseInt(roomCount, 10),
-        guestCount: Number.parseInt(guestCount, 10),
-        rentCost: Number.parseInt(rentCost, 10),
-        amenities: amenities.split(' ') as Amenities,
-        author,
-        commentCount: Number(commentCount),
-        coordinates: {
-          latitude: Number.parseInt(coordinates.split(' ')[0], 10),
-          longitude: Number.parseInt(coordinates.split(' ')[1], 10)
-        }
-      })
-      );
+    this.emit('end', importedRowCount);
   }
 }
